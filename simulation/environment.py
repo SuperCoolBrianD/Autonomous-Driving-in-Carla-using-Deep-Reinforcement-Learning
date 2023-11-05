@@ -9,7 +9,7 @@ from simulation.settings import *
 
 class CarlaEnvironment():
 
-    def __init__(self, client, world, town, checkpoint_frequency=100, continuous_action=True) -> None:
+    def __init__(self, client, world, town, traffic_manager, checkpoint_frequency=100, continuous_action=True) -> None:
 
 
         self.client = client
@@ -20,6 +20,7 @@ class CarlaEnvironment():
         self.continous_action_space = continuous_action
         self.display_on = VISUAL_DISPLAY
         self.vehicle = None
+        self.vehicle_leader = None
         self.settings = None
         self.current_waypoint_index = 0
         self.checkpoint_waypoint_index = 0
@@ -27,7 +28,8 @@ class CarlaEnvironment():
         self.checkpoint_frequency = checkpoint_frequency
         self.route_waypoints = None
         self.town = town
-        
+        self.traffic_manager = traffic_manager
+
         # Objects to be kept alive
         self.camera_obj = None
         self.env_camera_obj = None
@@ -46,15 +48,12 @@ class CarlaEnvironment():
     def reset(self):
 
         try:
-            
             if len(self.actor_list) != 0 or len(self.sensor_list) != 0:
                 self.client.apply_batch([carla.command.DestroyActor(x) for x in self.sensor_list])
                 self.client.apply_batch([carla.command.DestroyActor(x) for x in self.actor_list])
                 self.sensor_list.clear()
                 self.actor_list.clear()
             self.remove_sensors()
-
-
             # Blueprint of our main vehicle
             vehicle_bp = self.get_vehicle(CAR_NAME)
 
@@ -173,12 +172,13 @@ class CarlaEnvironment():
             self.velocity = np.sqrt(velocity.x**2 + velocity.y**2 + velocity.z**2) * 3.6
             
             # Action fron action space for contolling the vehicle with a discrete action
+            print(action_idx)
             if self.continous_action_space:
                 steer = float(action_idx[0])
                 steer = max(min(steer, 1.0), -1.0)
                 throttle = float((action_idx[1] + 1.0)/2)
                 throttle = max(min(throttle, 1.0), 0.0)
-                self.vehicle.apply_control(carla.VehicleControl(steer=self.previous_steer*0.9 + steer*0.1, throttle=self.throttle*0.9 + throttle*0.1))
+                self.vehicle.apply_control(carla.VehicleControl(steer=self.previous_steer*0.9 + steer*0.1, throttle=self.throttle*0.9 + throttle*0.1)) # todo
                 self.previous_steer = steer
                 self.throttle = throttle
             else:
@@ -207,6 +207,7 @@ class CarlaEnvironment():
 
             #transform = self.vehicle.get_transform()
             # Keep track of closest waypoint on the route
+            # todo path planning
             waypoint_index = self.current_waypoint_index
             for _ in range(len(self.route_waypoints)):
                 # Check if we passed the next waypoint along the route
@@ -220,7 +221,7 @@ class CarlaEnvironment():
 
             self.current_waypoint_index = waypoint_index
             # Calculate deviation from center of the lane
-            self.current_waypoint = self.route_waypoints[ self.current_waypoint_index    % len(self.route_waypoints)]
+            self.current_waypoint = self.route_waypoints[self.current_waypoint_index % len(self.route_waypoints)]
             self.next_waypoint = self.route_waypoints[(self.current_waypoint_index+1) % len(self.route_waypoints)]
             self.distance_from_center = self.distance_to_line(self.vector(self.current_waypoint.transform.location),self.vector(self.next_waypoint.transform.location),self.vector(self.location))
             self.center_lane_deviation += self.distance_from_center
@@ -248,7 +249,7 @@ class CarlaEnvironment():
                 reward = -10
             elif self.episode_start_time + 10 < time.time() and self.velocity < 1.0:
                 reward = -10
-                done = True
+                done = True # ?
             elif self.velocity > self.max_speed:
                 reward = -10
                 done = True
