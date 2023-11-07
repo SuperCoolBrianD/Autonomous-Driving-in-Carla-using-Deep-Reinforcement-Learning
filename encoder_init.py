@@ -14,7 +14,8 @@ class EncodeState():
 
             for params in self.conv_encoder.parameters():
                 params.requires_grad = False
-        except:
+        except Exception as E:
+            print(E)
             print('Encoder could not be initialized.')
             sys.exit()
     
