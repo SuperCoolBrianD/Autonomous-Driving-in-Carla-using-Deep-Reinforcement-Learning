@@ -16,6 +16,7 @@ from simulation.connection import ClientConnection
 from simulation.environment_follower import CarlaEnvironment
 from parameters import *
 import carla
+import torchrl
 
 
 def parse_args():
@@ -112,8 +113,10 @@ def runner():
     logging.info("Connection has been setup successfully.")
     if train:
         env = CarlaEnvironment(client, world,town, traffic_manager=traffic_manager)
+
     else:
         env = CarlaEnvironment(client, world,town,  traffic_manager=traffic_manager, checkpoint_frequency=None)
+
     encode = EncodeState(LATENT_DIM)
 
 

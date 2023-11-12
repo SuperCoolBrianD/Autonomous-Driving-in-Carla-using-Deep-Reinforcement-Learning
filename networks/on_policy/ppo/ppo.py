@@ -20,8 +20,10 @@ class ActorCritic(nn.Module):
 
         # Create the covariance matrix
         self.cov_mat = torch.diag(self.cov_var).unsqueeze(dim=0)
-
+        self.lstm_actor = nn.LSTM(self.obs_dim, 500)
+        self.lstm_critic = nn.LSTM(self.obs_dim, 500)
         # actor
+
         self.actor = nn.Sequential(
                         nn.Linear(self.obs_dim, 500),
                         nn.Tanh(),
@@ -54,6 +56,8 @@ class ActorCritic(nn.Module):
     def get_value(self, obs):
         if isinstance(obs, np.ndarray):
             obs = torch.tensor(obs, dtype=torch.float)
+        # obs = obs.view(1, 1, -1)
+        # out = self.lstm_critic(obs)[-1][-1]
         return self.critic(obs)
     
     def get_action_and_log_prob(self, obs):
@@ -78,12 +82,10 @@ class ActorCritic(nn.Module):
         return action.detach(), log_prob.detach()
     
     def evaluate(self, obs, action):
-
         mean = self.actor(obs)
         cov_var = self.cov_var.expand_as(mean)
         cov_mat = torch.diag_embed(cov_var)
         dist = MultivariateNormal(mean, cov_mat)
-        
         logprobs = dist.log_prob(action)
         dist_entropy = dist.entropy()
         values = self.critic(obs)

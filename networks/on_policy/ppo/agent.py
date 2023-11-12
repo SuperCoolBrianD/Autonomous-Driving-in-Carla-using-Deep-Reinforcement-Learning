@@ -29,7 +29,7 @@ class PPOAgent(object):
     def __init__(self, town, action_std_init=0.4):
         
         #self.env = env
-        self.obs_dim = 100
+        self.obs_dim = 101
         self.action_dim = 2
         self.clip = POLICY_CLIP
         self.gamma = GAMMA
@@ -53,10 +53,10 @@ class PPOAgent(object):
 
 
     def get_action(self, obs, train):
-
         with torch.no_grad():
             if isinstance(obs, np.ndarray):
                 obs = torch.tensor(obs, dtype=torch.float)
+
             action, logprob = self.old_policy.get_action_and_log_prob(obs.to(device))
         if train:
             self.memory.observation.append(obs.to(device))
@@ -101,9 +101,9 @@ class PPOAgent(object):
 
         
         # Optimize policy for K epochs
-        for _ in range(self.n_updates_per_iteration):
-
+        for i in range(self.n_updates_per_iteration):
             # Evaluating old actions and values
+
             logprobs, values, dist_entropy = self.policy.evaluate(old_states, old_actions)
 
             # match values tensor dimensions with rewards tensor

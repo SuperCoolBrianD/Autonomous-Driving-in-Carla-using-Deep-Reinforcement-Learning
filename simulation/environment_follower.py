@@ -15,6 +15,7 @@ class CarlaEnvironment():
 
         self.client = client
         self.world = world
+
         self.blueprint_library = self.world.get_blueprint_library()
         self.map = self.world.get_map()
         self.action_space = self.get_discrete_action_space()
@@ -41,7 +42,8 @@ class CarlaEnvironment():
         self.sensor_list = list()
         self.actor_list = list()
         self.walker_list = list()
-        self.create_pedestrians()
+
+        # self.create_pedestrians()
 
 
 
@@ -129,10 +131,11 @@ class CarlaEnvironment():
             self.previous_location = self.vehicle.get_location()
             self.distance_traveled = 0.0
             self.center_lane_deviation = 0.0
-            self.target_speed = 22  # km/h
-            self.max_speed = 25.0
+            self.target_speed = 40  # km/h
+            self.max_speed = 50.0
             self.min_speed = 15.0
             self.max_distance_from_center = 3
+            self.max_distance_from_leader = 25
             self.throttle = float(0.0)
             self.previous_steer = float(0.0)
             self.velocity = float(0.0)
@@ -143,6 +146,9 @@ class CarlaEnvironment():
 
             self.navigation_obs = np.array(
                 [self.throttle, self.velocity, self.previous_steer, self.distance_from_center, self.angle])
+            l_r = self.vehicle_leader.get_location()
+            f_r = self.vehicle.get_location()
+            self.lead_dist_obs = np.array([np.sqrt((l_r.x-f_r.x)**2 + (l_r.y-f_r.y)**2)])
             time.sleep(0.5)
             path = [i.transform.location for i in self.route_waypoints[self.checkpoint_waypoint_index % len(self.route_waypoints)+15:] if not i.is_junction]
             self.vehicle_leader.set_autopilot(True, self.traffic_manager.get_port())
@@ -150,7 +156,7 @@ class CarlaEnvironment():
             self.collision_history.clear()
 
             self.episode_start_time = time.time()
-            return [self.image_obs, self.navigation_obs]
+            return [self.image_obs, self.navigation_obs, self.lead_dist_obs]
 
         # except:
         #     self.client.apply_batch([carla.command.DestroyActor(x) for x in self.sensor_list])
@@ -176,11 +182,10 @@ class CarlaEnvironment():
         # Velocity of the vehicle
         velocity = self.vehicle.get_velocity()
         self.velocity = np.sqrt(velocity.x**2 + velocity.y**2) * 3.6
-        # l_r = self.vehicle_leader.get_location()
-        # f_r = self.vehicle.get_location()
-        # self.lead_dist =  np.sqrt((l_r.x-f_r.x)**2 + (l_r.y-f_r.y)**2)
+        l_r = self.vehicle_leader.get_location()
+        f_r = self.vehicle.get_location()
+        self.lead_dist_obs =  np.array([np.sqrt((l_r.x-f_r.x)**2 + (l_r.y-f_r.y)**2)])
         # print(self.lead_dist)
-        self.lead_dist = 10
 
         # Action fron action space for contolling the vehicle with a discrete action
         if self.continous_action_space:
@@ -262,7 +267,7 @@ class CarlaEnvironment():
         elif self.velocity > self.max_speed:
             reward = -10
             done = True
-        elif self.lead_dist > 100:
+        elif self.lead_dist_obs > self.max_distance_from_leader:
             reward = -10
             done = True
 
@@ -323,7 +328,7 @@ class CarlaEnvironment():
 
 
 
-        return [self.image_obs, self.navigation_obs], reward, done, [self.distance_covered, self.center_lane_deviation]
+        return [self.image_obs, self.navigation_obs, self.lead_dist_obs], reward, done, [self.distance_covered, self.center_lane_deviation]
 
         # except Exception as E:
         #     print(E)
