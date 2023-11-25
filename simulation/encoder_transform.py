@@ -35,8 +35,6 @@ class EncodeImage(Transform):
         self.del_keys = del_keys
         self.outdim = 101
 
-
-
     def _call(self, tensordict):
         image_obs = tensordict.get(self.in_keys[0])
         nav_obs = tensordict.get(self.in_keys[1])

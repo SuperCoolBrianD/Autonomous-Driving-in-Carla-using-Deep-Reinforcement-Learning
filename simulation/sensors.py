@@ -2,7 +2,7 @@ import math
 import numpy as np
 import weakref
 import pygame
-from simulation.connection import carla
+import carla
 from simulation.settings import RGB_CAMERA, SSC_CAMERA
 
 
@@ -54,7 +54,7 @@ class CameraSensorEnv:
 
         pygame.init()
         self.display = pygame.display.set_mode((720, 720),pygame.HWSURFACE | pygame.DOUBLEBUF)
-        self.sensor_name = RGB_CAMERA
+        self.sensor_name = SSC_CAMERA
         self.parent = vehicle
         self.surface = None
         world = self.parent.get_world()
@@ -70,7 +70,7 @@ class CameraSensorEnv:
         thrid_person_camera_bp.set_attribute('image_size_x', f'720')
         thrid_person_camera_bp.set_attribute('image_size_y', f'720')
         third_camera = world.spawn_actor(thrid_person_camera_bp, carla.Transform(
-            carla.Location(x=-4.0, z=2.0), carla.Rotation(pitch=-12.0)), attach_to=self.parent)
+            carla.Location(x=2.4, z=1.5), carla.Rotation(pitch= -10)), attach_to=self.parent)
         return third_camera
 
     @staticmethod
@@ -78,6 +78,7 @@ class CameraSensorEnv:
         self = weak_self()
         if not self:
             return
+        image.convert(carla.ColorConverter.CityScapesPalette)
         array = np.frombuffer(image.raw_data, dtype=np.dtype("uint8"))
         placeholder1 = array.reshape((image.width, image.height, 4))
         placeholder2 = placeholder1[:, :, :3]

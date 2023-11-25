@@ -2,7 +2,7 @@ import time
 import random
 import numpy as np
 import pygame
-from simulation.connection import carla
+import carla
 from simulation.sensors import CameraSensor, CameraSensorEnv, CollisionSensor
 from simulation.settings import *
 from carla import Transform, Location, Rotation
@@ -15,10 +15,6 @@ from torchrl.envs import EnvBase
 from torchrl.envs.transforms import Compose
 from torchrl.envs.utils import check_env_specs, set_exploration_mode
 from autoencoder.encoder import VariationalEncoder
-
-
-
-
 
 
 class CarlaEnvironment(EnvBase):
@@ -90,7 +86,7 @@ class CarlaEnvironment(EnvBase):
             if isinstance(a, carla.Vehicle) or isinstance(a, carla.Sensor):
                 print('destroying')
                 a.destroy()
-        time.sleep(0.25)
+        time.sleep(0.5)
         # Blueprint of our main vehicle
         vehicle_bp = self.get_vehicle(CAR_NAME)
         if self.town == "Town07":
@@ -197,10 +193,10 @@ class CarlaEnvironment(EnvBase):
         # self.obs = torch.cat(((encode_obs, torch.tensor(self.navigation_obs, device=self.device, dtype=self.dtype))), 1)
         out_tensordict.set("image", image_obs)
         out_tensordict.set("navigation", navigation_obs)
-                                    # "reward": torch.tensor(0, device=self.device, dtype=self.dtype),
-                                    #           "done": torch.tensor(False,
-                                    #                                device=self.device)}, batch_size = torch.Size(), device=self.device)
+        # out_tensordict.set("reward", torch.tensor(0, device=self.device, dtype=self.dtype))
+        # out_tensordict.set("done", torch.tensor(False))
         self.episode_start_time = time.time()
+
         return out_tensordict
 
         # except:
@@ -561,240 +557,4 @@ class CarlaEnvironment(EnvBase):
         self.front_camera = None
         self.collision_history = None
         self.wrong_maneuver = None
-
-if __name__ == '__main__':
-    from encoder_init import EncodeState
-    from torchrl.modules import MultiAgentMLP, ProbabilisticActor, TanhNormal
-    from tensordict.nn.distributions import NormalParamExtractor
-    from tensordict.nn import TensorDictModule
-    from torchrl.collectors import SyncDataCollector
-    from torchrl.data.replay_buffers import ReplayBuffer
-    from torchrl.data.replay_buffers.storages import LazyTensorStorage
-    from torchrl.data.replay_buffers.samplers import SamplerWithoutReplacement
-    from torchrl.objectives import ClipPPOLoss, ValueEstimators
-    from tqdm import tqdm
-    from networks import ppo
-    from torchrl.envs import TransformedEnv, ObservationNorm, Compose, DoubleToFloat, StepCounter
-    from simulation.encoder_transform import EncodeImage
-    from autoencoder.encoder import VariationalEncoder
-    from loading import load_yaml
-    client = carla.Client('localhost', 2000)
-    world = client.get_world()
-    actors = world.get_actors()
-    for a in actors:
-        if isinstance(a, carla.Vehicle) or isinstance(a, carla.Sensor):
-            a.destroy()
-    time.sleep(0.5)
-    traffic_manager = client.get_trafficmanager(8000)
-    town = 'Town07'
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    env = CarlaEnvironment(client, world, town, traffic_manager=traffic_manager, device=device)
-    conv_encoder = VariationalEncoder(95).to(device)
-
-    conv_encoder.load()
-    conv_encoder.eval()
-    env = TransformedEnv(
-        env,
-        Compose(
-            # normalize observations
-            EncodeImage(in_keys=["image", 'navigation'], out_keys=["observation"], encoder=conv_encoder, del_keys=False),
-            ObservationNorm(in_keys=["observation"]),
-            DoubleToFloat(in_keys=["observation"], ),
-            StepCounter()
-        )
-    )
-    env.transform[1].init_stats(num_iter=20, reduce_dim=0, cat_dim=0)
-
-    # config["loc"] = env.transform[0].loc
-    # config["scale"] = env.transform[0].scale
-    # config = load_yaml("config.yaml")
-    # config["frames_per_batch"] = config["frames_per_batch_init"] // config["frame_skip"]  # how many frames to take from the environment
-    # config["total_frames"] = config["total_frames_init"] // config["frame_skip"]  # total number of frames to get from the environment
-    # # wandb.login()
-    # # wandb.init(project=config["env_name"] + '_' + config["algorithm"])  # log using weights and biases
-    #
-    # torch.manual_seed(config['random_seed'])
-    # np.random.seed(config['random_seed'])
-    # random.seed(config['random_seed'])
-    # env.set_seed(config['random_seed'])
-    #
-    #
-    # check_env_specs(env)
-    #
-    # # rollout = env.rollout(7)
-    # # print("\nrollout of three steps:\n", rollout)
-    # # print("\nShape of the rollout TensorDict:\n", rollout.batch_size)
-    # actor_net, value_net, logs = ppo.train(config, env, verbose=True)
-    share_parameters_policy = True
-    # Sampling
-    frames_per_batch = 2000  # Number of team frames collected per training iteration
-    n_iters = 10  # Number of sampling and training iterations
-    total_frames = frames_per_batch * n_iters
-    # Training
-    num_epochs = 10  # Number of optimization steps per training iteration
-    minibatch_size = 80  # Size of the mini-batches in each optimization step
-    lr = 3e-4  # Learning rate
-    max_grad_norm = 1.0  # Maximum norm for the gradients
-
-    # PPO
-    clip_epsilon = 0.2  # clip value for PPO loss
-    gamma = 0.9  # discount factor
-    lmbda = 0.9  # lambda for generalised advantage estimation
-    entropy_eps = 1e-4  # coefficient of the entropy term in the PPO loss
-    policy_net = torch.nn.Sequential(
-        MultiAgentMLP(
-            n_agent_inputs=env.observation_spec["observation"].shape[
-                -1
-            ],  # n_obs_per_agent
-            n_agent_outputs=2 * env.action_spec.shape[-1],  # 2 * n_actions_per_agents
-            n_agents=1,
-            centralised=False,  # the policies are decentralised (ie each agent will act from its observation)
-            share_params=share_parameters_policy,
-            device=device,
-            depth=2,
-            num_cells=256,
-            activation_class=torch.nn.Tanh,
-        ),
-        NormalParamExtractor(),
-        # this will just separate the last dimension into two outputs: a loc and a non-negative scale
-    )
-    policy_module = TensorDictModule(
-        policy_net,
-        in_keys=[("observation")],
-        out_keys=[("loc"), ("scale")],
-    )
-
-    policy = ProbabilisticActor(
-        module=policy_module,
-        spec=env.action_spec,
-        in_keys=[("loc"), ("scale")],
-        out_keys=[env.action_key],
-        distribution_class=TanhNormal,
-        distribution_kwargs={
-            "min": env.action_spec.space.low,
-            "max": env.action_spec.space.high,
-        },
-        return_log_prob=True,
-        log_prob_key=("sample_log_prob"),
-    )  # we'll need the log-prob for the PPO loss
-
-    share_parameters_critic = True
-    mappo = True  # IPPO if False
-
-    critic_net = MultiAgentMLP(
-        n_agent_inputs=env.observation_spec["observation"].shape[-1],
-        n_agent_outputs=1,  # 1 value per agent
-        n_agents=1,
-        centralised=mappo,
-        share_params=share_parameters_critic,
-        device=device,
-        depth=2,
-        num_cells=256,
-        activation_class=torch.nn.Tanh,
-    )
-
-    critic = TensorDictModule(
-        module=critic_net,
-        in_keys=[("observation")],
-        out_keys=[("state_value")],
-    )
-
-    collector = SyncDataCollector(
-        env,
-        policy,
-        device=device,
-        storing_device=device,
-        frames_per_batch=frames_per_batch,
-        total_frames=total_frames,
-    )
-    replay_buffer = ReplayBuffer(
-        storage=LazyTensorStorage(
-            frames_per_batch, device=device
-        ),  # We store the frames_per_batch collected at each iteration
-        sampler=SamplerWithoutReplacement(),
-        batch_size=minibatch_size,  # We will sample minibatches of this size
-    )
-
-    loss_module = ClipPPOLoss(
-        actor=policy,
-        critic=critic,
-        clip_epsilon=clip_epsilon,
-        entropy_coef=entropy_eps,
-        normalize_advantage=False,  # Important to avoid normalizing across the agent dimension
-    )
-    loss_module.set_keys(  # We have to tell the loss where to find the keys
-        reward=env.reward_key,
-        action=env.action_key,
-        sample_log_prob=("sample_log_prob"),
-        value=("state_value"),
-        # These last 2 keys will be expanded to match the reward shape
-        done=("done"),
-        terminated=("terminated"),
-    )
-
-    loss_module.make_value_estimator(
-        ValueEstimators.GAE, gamma=gamma, lmbda=lmbda
-    )  # We build GAE
-    GAE = loss_module.value_estimator
-
-    optim = torch.optim.Adam(loss_module.parameters(), lr)
-
-    # pbar = tqdm(total=n_iters, desc="episode_reward_mean = 0")
-
-    episode_reward_mean_list = []
-    for i, tensordict_data in enumerate(collector):
-        print(i)
-        tensordict_data.set(
-            ("next", "done"),
-            tensordict_data.get(("next", "done"))
-        )
-        tensordict_data.set(
-            ("next", "terminated"),
-            tensordict_data.get(("next", "terminated"))
-        )
-        # We need to expand the done and terminated to match the reward shape (this is expected by the value estimator)
-
-        with torch.no_grad():
-            GAE(
-                tensordict_data,
-                params=loss_module.critic_params,
-                target_params=loss_module.target_critic_params,
-            )  # Compute GAE and add it to the data
-
-        data_view = tensordict_data.reshape(-1)  # Flatten the batch size to shuffle data
-        replay_buffer.extend(data_view)
-
-        for _ in range(num_epochs):
-            for _ in range(frames_per_batch // minibatch_size):
-                subdata = replay_buffer.sample()
-                loss_vals = loss_module(subdata)
-
-                loss_value = (
-                        loss_vals["loss_objective"]
-                        + loss_vals["loss_critic"]
-                        + loss_vals["loss_entropy"]
-                )
-                loss_value.backward()
-
-                torch.nn.utils.clip_grad_norm_(
-                    loss_module.parameters(), max_grad_norm
-                )  # Optional
-
-                optim.step()
-
-                optim.zero_grad()
-        collector.update_policy_weights_()
-        # Logging
-        # done = tensordict_data.get(("next", "done"))
-        # episode_reward_mean = (
-        #     tensordict_data.get(("next", "reward"))[done].mean().item()
-        # )
-        # episode_reward_mean_list.append(episode_reward_mean)
-        # pbar.set_description(f"episode_reward_mean = {episode_reward_mean}", refresh=False)
-        # pbar.update()
-    check_env_specs(env)
-    n_rollout_steps = 10000
-    rollout = env.rollout(n_rollout_steps)
-    print("rollout of three steps:", rollout)
-    print("Shape of the rollout TensorDict:", rollout.batch_size)
 
