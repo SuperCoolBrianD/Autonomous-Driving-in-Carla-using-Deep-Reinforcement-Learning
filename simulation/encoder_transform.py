@@ -39,7 +39,8 @@ class EncodeImage(Transform):
         image_obs = tensordict.get(self.in_keys[0])
         nav_obs = tensordict.get(self.in_keys[1])
         encoder_obs = self._apply_transform(image_obs)
-        out = torch.cat((encoder_obs, nav_obs), 1)
+        out = torch.cat((encoder_obs, nav_obs), 1).squeeze(0)
+
         tensordict.set(
             self.out_keys[0],
             out,
@@ -74,7 +75,8 @@ class EncodeImage(Transform):
 
         for out_key in self.out_keys:
             observation_spec[out_key] = UnboundedContinuousTensorSpec(
-                shape=torch.Size([dim, self.outdim]), device=device, dtype=torch.float64
+                shape=torch.Size([self.outdim]), device=device, dtype=torch.float64
             )
 
         return observation_spec
+

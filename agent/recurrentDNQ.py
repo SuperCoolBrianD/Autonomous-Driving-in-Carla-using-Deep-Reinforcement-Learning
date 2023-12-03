@@ -22,12 +22,9 @@ from torchrl.objectives.value import GAE
 from torchrl.modules import ProbabilisticActor, LSTMModule, MLP
 from tensordict.nn import TensorDictModule, TensorDictSequential
 from tensordict.nn.distributions import NormalParamExtractor
-def create_model(input_size, output_size, env, hidden_size=256, num_layers=3, out_keys=["logits"]):
-
-    return
 
 
-class PPOAgent:
+class DNQAgent:
     def __init__(self, env, device):
         self.env = env
         self.device = device
@@ -48,7 +45,7 @@ class PPOAgent:
             sampler=SamplerWithoutReplacement(),
         )
         self.advantage_module = GAE(
-            gamma=gamma, lmbda=lmbda, value_network=self.value_module, average_gae=True,
+            gamma=gamma, lmbda=lmbda, value_network=self.value_module, average_gae=True
         )
 
         self.loss_module = ClipPPOLoss(
@@ -79,15 +76,15 @@ class PPOAgent:
         #     nn.LazyLinear(2 * self.env .action_spec.shape[-1], device=self.device),
         #     NormalParamExtractor(),
         # )
-        actor_net = ActorNet(num_cells, self.env .observation_spec["observation"].shape[-1], 256,
-                             self.env .action_spec.shape[-1], self.device)
-        # _, actor_net = create_model(self.env .observation_spec["observation"].shape[-1],
-        #                      self.env.action_spec.shape[-1]*2, out_keys=["loc", "scale"], env=self.env)
+        # actor_net = ActorNet(num_cells, self.env .observation_spec["observation"].shape[-1], 256,
+        #                      self.env .action_spec.shape[-1], self.device)
+        _, actor_net = create_model(self.env .observation_spec["observation"].shape[-1],
+                             self.env.action_spec.shape[-1]*2, out_keys=["loc", "scale"])
         actor_net.to(self.device)
-        # actor_net(self.env.reset())
-        actor_net.forward(torch.randn(self.env.observation_spec["observation"].shape).to(self.device))
+
+        # actor_net.forward(torch.randn(self.env.observation_spec["observation"].shape).unsqueeze(0).to(self.device))
         policy_module = TensorDictModule(
-            actor_net, in_keys=['observation'], out_keys=["loc", "scale"]
+            actor_net, in_keys=["observation"], out_keys=["loc", "scale"]
         )
         self.policy_module = ProbabilisticActor(
             module=policy_module,
@@ -103,11 +100,11 @@ class PPOAgent:
         )
 
     def create_critic(self):
-        value_net = CriticNet(num_cells, self.env.observation_spec["observation"].shape[-1], 256, 1, self.device)
-        # _, value_net = create_model(input_size=self.env.observation_spec["observation"].shape[-1],
-        #                      output_size=self.env.action_spec.shape[-1]*2, out_keys=["loc", "scale"], env=self.env)
+        # value_net = CriticNet(num_cells, self.env.observation_spec["observation"].shape[-1], 256, 1, self.device)
+        _, value_net = create_model(input_size=self.env.observation_spec["observation"].shape[-1],
+                             output_size=self.env.action_spec.shape[-1]*2, out_keys=["loc", "scale"])
         value_net.to(self.device)
-        value_net.forward(torch.randn(self.env.observation_spec["observation"].shape).to(self.device))
+        # value_net.forward(torch.randn(self.env.observation_spec["observation"].shape).unsqueeze(0).to(self.device))
         self.value_module = ValueOperator(
             module=value_net,
             in_keys=["observation"],
