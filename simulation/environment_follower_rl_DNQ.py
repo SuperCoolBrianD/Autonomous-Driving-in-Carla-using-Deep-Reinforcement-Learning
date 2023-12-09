@@ -68,7 +68,7 @@ class CarlaEnvironment(EnvBase):
         done_spec = DiscreteTensorSpec(2, shape=torch.Size([1]), dtype=torch.bool)
         terminated = DiscreteTensorSpec(2, shape=torch.Size([1]), dtype=torch.bool)
         self.done_spec = CompositeSpec(done=done_spec, terminated=terminated)
-        self.target_dist = 15
+        self.min_distance_from_leader = 0.5
         # self.create_pedestrians()
 
 
@@ -306,16 +306,18 @@ class CarlaEnvironment(EnvBase):
             done = True
             r_o = -10
         else:
-            r_o = self.distance_from_center/self.max_distance_from_center
+            r_o = (self.max_distance_from_center-self.distance_from_center)/self.max_distance_from_center
 
         if self.lead_dist_obs > self.max_distance_from_leader:
             print('too far')
             r_l = -10
             done = True
-        elif self.lead_dist_obs < self.target_dist:
-            r_l = self.lead_dist_obs/self.target_dist
+        elif self.min_distance_from_leader <= self.lead_dist_obs < self.max_distance_from_leader:
+            r_l = 1
         else:
-            r_l = (self.target_dist - self.lead_dist_obs)/self.target_dist
+            print('too close')
+            r_l = -10
+            done = True
         r_t = self.timesteps/7500
         r_s = -0.1 # for stopping
         reward = r_v + r_c + r_o + r_l + r_s+r_t
