@@ -284,41 +284,41 @@ class CarlaEnvironment(EnvBase):
                 self.checkpoint_waypoint_index = (self.current_waypoint_index // self.checkpoint_frequency) * self.checkpoint_frequency
 
 
+        if not self.fresh_start:
+            if self.checkpoint_frequency is not None:
+                self.checkpoint_waypoint_index = (self.current_waypoint_index // self.checkpoint_frequency) * self.checkpoint_frequency
+
+
         # Rewards are given below!
         done = False
-        reward = 0
 
+        if self.velocity > self.target_speed:
+            r_v = self.target_speed - self.velocity
+        else:
+            r_v = self.velocity
         if len(self.collision_history) != 0:
             done = True
-            reward = -10
-        elif self.distance_from_center > self.max_distance_from_center:
+            r_c = -10
+        else:
+            r_c = 0
+        if self.distance_from_center > self.max_distance_from_center:
             done = True
-            reward = -10
-        elif self.episode_start_time + 10 < time.time() and self.velocity < 1.0:
-            reward = -10
-            done = True
-        elif self.velocity > self.max_speed:
-            reward = -10
-            done = True
-        elif self.lead_dist_obs > self.max_distance_from_leader:
-            reward = -10
-            done = True
+            r_o = -10
+        else:
+            r_o = 0
 
-        # Interpolated from 1 when centered to 0 when 3 m from center
-        centering_factor = max(1.0 - self.distance_from_center / self.max_distance_from_center, 0.0)
-        # Interpolated from 1 when aligned with the road to 0 when +/- 30 degress of road
-        angle_factor = max(1.0 - abs(self.angle / np.deg2rad(20)), 0.0)
-
-        if not done:
-            if self.continous_action_space:
-                if self.velocity < self.min_speed:
-                    reward = (self.velocity / self.min_speed) * centering_factor * angle_factor
-                elif self.velocity > self.target_speed:
-                    reward = (1.0 - (self.velocity-self.target_speed) / (self.max_speed-self.target_speed)) * centering_factor * angle_factor
-                else:
-                    reward = 1.0 * centering_factor * angle_factor
-            else:
-                reward = 1.0 * centering_factor * angle_factor
+        if self.lead_dist_obs > self.max_distance_from_leader:
+            r_l = -10
+            done = True
+        elif self.lead_dist_obs < self.min_distance_from_leader:
+            r_l = -10
+            done = True
+        elif self.lead_dist_obs < self.target_dist:
+            r_l = self.lead_dist_obs
+        else:
+            r_l = self.target_dist - self.lead_dist_obs
+        r_s = -0.1 # for stopping
+        reward = r_v + r_c + r_o + r_l + r_s
 
         if self.timesteps >= 7500:
             done = True

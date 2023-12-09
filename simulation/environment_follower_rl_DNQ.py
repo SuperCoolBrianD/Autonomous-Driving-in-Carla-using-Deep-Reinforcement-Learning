@@ -68,6 +68,7 @@ class CarlaEnvironment(EnvBase):
         done_spec = DiscreteTensorSpec(2, shape=torch.Size([1]), dtype=torch.bool)
         terminated = DiscreteTensorSpec(2, shape=torch.Size([1]), dtype=torch.bool)
         self.done_spec = CompositeSpec(done=done_spec, terminated=terminated)
+        self.target_dist = 15
         # self.create_pedestrians()
 
 
@@ -88,15 +89,8 @@ class CarlaEnvironment(EnvBase):
         time.sleep(0.5)
         # Blueprint of our main vehicle
         vehicle_bp = self.get_vehicle(CAR_NAME)
-        if self.town == "Town07":
-            transform = self.map.get_spawn_points()[38]  # Town7  is 38
-            self.total_distance = 750
-        elif self.town == "Town02":
-            transform = self.map.get_spawn_points()[1]  # Town2 is 1
-            self.total_distance = 780
-        else:
-            transform = random.choice(self.map.get_spawn_points())
-            self.total_distance = 250
+        transform = self.map.get_spawn_points()[38]  # Town7  is 38
+        self.total_distance = 750
 
         self.vehicle_leader = self.world.spawn_actor(vehicle_bp, transform)
         self.vehicle = self.world.spawn_actor(vehicle_bp, self.map.get_spawn_points()[39])
@@ -228,7 +222,6 @@ class CarlaEnvironment(EnvBase):
         # print(self.lead_dist)
 
         # Action fron action space for contolling the vehicle with a discrete action
-        action = action.detach().cpu().numpy().flatten()
         # steer 0 for left 1 for stay the same 2 for right action[0]
         # throttle 0 for release 1 for stay the same 2 step on i action[1]
         if action[0] == 0:
@@ -271,7 +264,7 @@ class CarlaEnvironment(EnvBase):
             # Check if we passed the next waypoint along the route
             next_waypoint_index = waypoint_index + 1
             wp = self.route_waypoints[next_waypoint_index % len(self.route_waypoints)]
-            dot = np.dot(self.vector(wp.transform.get_forward_vector())[:2],self.vector(self.location - wp.transform.location)[:2])
+            dot = np.dot(self.vector(wp.transform.get_forward_vector())[:2], self.vector(self.location - wp.transform.location)[:2])
             if dot > 0.0:
                 waypoint_index += 1
             else:
@@ -297,39 +290,51 @@ class CarlaEnvironment(EnvBase):
 
         # Rewards are given below!
         done = False
-        reward = 0
 
+        if self.velocity > self.target_speed:
+            r_v = (self.target_speed - self.velocity)/self.target_speed
+        else:
+            r_v = self.velocity/self.target_speed
         if len(self.collision_history) != 0:
+            print('collision')
             done = True
-            reward = -10
-        elif self.distance_from_center > self.max_distance_from_center:
+            r_c = -10
+        else:
+            r_c = 0
+        if self.distance_from_center > self.max_distance_from_center:
+            print('departed')
             done = True
-            reward = -10
-        elif self.episode_start_time + 10 < time.time() and self.velocity < 1.0:
-            reward = -10
-            done = True
-        elif self.velocity > self.max_speed:
-            reward = -10
-            done = True
-        elif self.lead_dist_obs > self.max_distance_from_leader:
-            reward = -10
-            done = True
+            r_o = -10
+        else:
+            r_o = self.distance_from_center/self.max_distance_from_center
 
-        # Interpolated from 1 when centered to 0 when 3 m from center
-        centering_factor = max(1.0 - self.distance_from_center / self.max_distance_from_center, 0.0)
-        # Interpolated from 1 when aligned with the road to 0 when +/- 30 degress of road
-        angle_factor = max(1.0 - abs(self.angle / np.deg2rad(20)), 0.0)
+        if self.lead_dist_obs > self.max_distance_from_leader:
+            print('too far')
+            r_l = -10
+            done = True
+        elif self.lead_dist_obs < self.target_dist:
+            r_l = self.lead_dist_obs/self.target_dist
+        else:
+            r_l = (self.target_dist - self.lead_dist_obs)/self.target_dist
+        r_t = self.timesteps/7500
+        r_s = -0.1 # for stopping
+        reward = r_v + r_c + r_o + r_l + r_s+r_t
+        #
+        # # Interpolated from 1 when centered to 0 when 3 m from center
+        # centering_factor = max(1.0 - self.distance_from_center / self.max_distance_from_center, 0.0)
+        # # # Interpolated from 1 when aligned with the road to 0 when +/- 30 degress of road
+        # angle_factor = max(1.0 - abs(self.angle / np.deg2rad(20)), 0.0)
+        # distance_factor = max(1.0 - self.lead_dist_obs / self.max_distance_from_leader, 0.0)
+        #
+        # if not done:
+        #     if self.velocity < self.min_speed:
+        #         reward = (self.velocity / self.min_speed) * distance_factor
+        #     elif self.velocity > self.target_speed:
+        #         reward = (1.0 - (self.velocity-self.target_speed) / (self.max_speed-self.target_speed)) * distance_factor
+        #     else:
+        #         reward = 1.0 * distance_factor
 
-        if not done:
-            if self.continous_action_space:
-                if self.velocity < self.min_speed:
-                    reward = (self.velocity / self.min_speed) * centering_factor * angle_factor
-                elif self.velocity > self.target_speed:
-                    reward = (1.0 - (self.velocity-self.target_speed) / (self.max_speed-self.target_speed)) * centering_factor * angle_factor
-                else:
-                    reward = 1.0 * centering_factor * angle_factor
-            else:
-                reward = 1.0 * centering_factor * angle_factor
+
 
         if self.timesteps >= 7500:
             done = True
@@ -351,7 +356,7 @@ class CarlaEnvironment(EnvBase):
         normalized_distance_from_center = self.distance_from_center / self.max_distance_from_center
         normalized_angle = abs(self.angle / np.deg2rad(20))
         self.navigation_obs = np.array([[self.throttle, self.velocity, normalized_velocity, normalized_distance_from_center,
-                                         normalized_angle, self.lead_dist_obs]])
+                                         steer, self.lead_dist_obs]])
 
         # image_obs = torch.tensor(self.image_obs, dtype=torch.float).to(self.device)
         # image_obs = image_obs.unsqueeze(0)

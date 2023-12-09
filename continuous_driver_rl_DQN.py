@@ -20,7 +20,7 @@ import tqdm
 from tensordict.nn import TensorDictModule as Mod, TensorDictSequential as Seq
 from torch import nn
 from torchrl.collectors import SyncDataCollector
-from torchrl.data import LazyMemmapStorage, TensorDictReplayBuffer
+import pickle
 from torchrl.envs import (
     Compose,
     ExplorationType,
@@ -37,7 +37,7 @@ from torchrl.envs import (
 from torchrl.envs.libs.gym import GymEnv
 from torchrl.modules import ConvNet, EGreedyWrapper, LSTMModule, MLP, QValueModule
 from torchrl.objectives import DQNLoss, SoftUpdate
-
+from agent.hyperparameters import *
 device = torch.device(0) if torch.cuda.device_count() else torch.device("cpu")
 
 client = carla.Client('localhost', 2000)
@@ -50,7 +50,6 @@ time.sleep(0.5)
 traffic_manager = client.get_trafficmanager(8000)
 town = 'Town07'
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-print(device)
 env = CarlaEnvironment(client, world, town, traffic_manager=traffic_manager, device=device)
 conv_encoder = VariationalEncoder(95).to(device)
 
@@ -76,8 +75,7 @@ env = TransformedEnv(
 
     )
 )
-print(env.specs)
-env.transform[-1].init_stats(num_iter=100, reduce_dim=0, cat_dim=0)
+env.transform[-1].init_stats(num_iter=1000, reduce_dim=0, cat_dim=0)
 check_env_specs(env)
 lstm = LSTMModule(
     input_size=101,
@@ -108,9 +106,9 @@ loss_fn = DQNLoss(policy, action_space=env.action_spec, delay_value=True)
 
 updater = SoftUpdate(loss_fn, eps=0.95)
 
-optim = torch.optim.Adam(policy.parameters(), lr=3e-4)
+optim = torch.optim.Adam(policy.parameters(), lr=lr)
 
-collector = SyncDataCollector(env, stoch_policy, frames_per_batch=50, total_frames=20000, reset_at_each_iter=True)
+collector = SyncDataCollector(env, stoch_policy, frames_per_batch=frames_per_batch, total_frames=total_frames, reset_at_each_iter=True)
 rb = ReplayBuffer(
             storage=LazyTensorStorage(50),
             sampler=SamplerWithoutReplacement(),
@@ -118,12 +116,12 @@ rb = ReplayBuffer(
         )
 
 utd = 16
-pbar = tqdm.tqdm(total=1_000_000)
+pbar = tqdm.tqdm(total=total_frames/frames_per_batch)
 longest = 0
 
 traj_lens = []
 for i, data in enumerate(collector):
-    print(f"{i}/{collector.total_frames}")
+    print(f"\n{i}")
     if i == 0:
         print(
             "Let us print the first batch of data.\nPay attention to the key names "
@@ -136,6 +134,7 @@ for i, data in enumerate(collector):
     pbar.update(data.numel())
     # it is important to pass data that is not flattened
     rb.extend(data.unsqueeze(0).to_tensordict().cpu())
+    print(f"eps reward{np.sum(data['next']['reward'].detach().cpu().numpy())}")
     for _ in range(utd):
         s = rb.sample().to(device)
         loss_vals = loss_fn(s)
@@ -150,7 +149,9 @@ for i, data in enumerate(collector):
     stoch_policy.step(data.numel())
     updater.step()
 
-    if i % 50 == 0:
+    if i % 5 == 0:
         with set_exploration_type(ExplorationType.MODE), torch.no_grad():
             rollout = env.rollout(10000, stoch_policy)
             traj_lens.append(rollout.get(("next", "step_count")).max().item())
+pickle.dump(traj_lens, open("traj_lens.pkl", "wb"))
+pickle.dump(stoch_policy, open("trained_policy.pkl", "wb"))
