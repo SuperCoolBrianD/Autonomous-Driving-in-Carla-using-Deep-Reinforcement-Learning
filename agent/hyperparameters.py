@@ -1,8 +1,8 @@
 num_cells = 256  # number of cells in each layer i.e. output dim.
-lr = 3e-4
+lr = 1e-5
 max_grad_norm = 1.0
 frame_skip = 1
-frames_per_batch = 1000 // frame_skip
+frames_per_batch = 5000 // frame_skip
 # For a complete training, bring the number of frames up to 1M
 total_frames = 10_000_000 // frame_skip
 

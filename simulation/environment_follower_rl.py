@@ -22,7 +22,7 @@ class CarlaEnvironment(EnvBase):
     def __init__(self, client, world, town, traffic_manager, checkpoint_frequency=100, continuous_action=True, obs_size=101, device='cpu') -> None:
         super(CarlaEnvironment, self).__init__()
         self.to(device)
-        self.dtype = torch.float64
+        self.dtype = torch.float32
         self.client = client
         self.world = world
         self.n_agents = 1
@@ -68,6 +68,7 @@ class CarlaEnvironment(EnvBase):
         done_spec = DiscreteTensorSpec(2, shape=torch.Size([1]), dtype=torch.bool)
         terminated = DiscreteTensorSpec(2, shape=torch.Size([1]), dtype=torch.bool)
         self.done_spec = CompositeSpec(done=done_spec, terminated=terminated)
+        self.min_distance_from_leader = 0.5
         # self.create_pedestrians()
 
 
@@ -84,20 +85,12 @@ class CarlaEnvironment(EnvBase):
         actors = self.world.get_actors()
         for a in actors:
             if isinstance(a, carla.Vehicle) or isinstance(a, carla.Sensor):
-                print('destroying')
                 a.destroy()
         time.sleep(0.5)
         # Blueprint of our main vehicle
         vehicle_bp = self.get_vehicle(CAR_NAME)
-        if self.town == "Town07":
-            transform = self.map.get_spawn_points()[38]  # Town7  is 38
-            self.total_distance = 750
-        elif self.town == "Town02":
-            transform = self.map.get_spawn_points()[1]  # Town2 is 1
-            self.total_distance = 780
-        else:
-            transform = random.choice(self.map.get_spawn_points())
-            self.total_distance = 250
+        transform = self.map.get_spawn_points()[38]  # Town7  is 38
+        self.total_distance = 750
 
         self.vehicle_leader = self.world.spawn_actor(vehicle_bp, transform)
         self.vehicle = self.world.spawn_actor(vehicle_bp, self.map.get_spawn_points()[39])
@@ -159,11 +152,13 @@ class CarlaEnvironment(EnvBase):
         self.previous_location = self.vehicle.get_location()
         self.distance_traveled = 0.0
         self.center_lane_deviation = 0.0
-        self.target_speed = 40  # km/h
-        self.max_speed = 50.0
+        self.target_speed = 25  # km/h
+        self.max_speed = 30
         self.min_speed = 15.0
         self.max_distance_from_center = 3
         self.max_distance_from_leader = 25
+        self.min_distance_from_leader = 5
+        self.max_angle = 15
         self.throttle = float(0.0)
         self.previous_steer = float(0.0)
         self.velocity = float(0.0)
@@ -208,8 +203,6 @@ class CarlaEnvironment(EnvBase):
         #     self.remove_sensors()
         #     if self.display_on:
         #         pygame.quit()
-
-
 # ----------------------------------------------------------------
 # Step method is used for implementing actions taken by our agent|
 # ----------------------------------------------------------------
@@ -218,6 +211,7 @@ class CarlaEnvironment(EnvBase):
     def _step(self, tensordict):
         # try:
         action = tensordict["action"]
+
         self.timesteps+=1
         self.fresh_start = False
         # Velocity of the vehicle
@@ -230,11 +224,13 @@ class CarlaEnvironment(EnvBase):
 
         # Action fron action space for contolling the vehicle with a discrete action
         action = action.detach().cpu().numpy().flatten()
+
         steer = float(action[0])
         steer = max(min(steer, 1.0), -1.0)
         throttle = float((action[1] + 1.0)/2)
+
         throttle = max(min(throttle, 1.0), 0.0)
-        self.vehicle.apply_control(carla.VehicleControl(steer=self.previous_steer*0.9 + steer*0.1, throttle=self.throttle*0.9 + throttle*0.1))
+        self.vehicle.apply_control(carla.VehicleControl(steer=steer, throttle=throttle))
         self.previous_steer = steer
         self.throttle = throttle
 
@@ -273,52 +269,72 @@ class CarlaEnvironment(EnvBase):
         self.distance_from_center = self.distance_to_line(self.vector(self.current_waypoint.transform.location),self.vector(self.next_waypoint.transform.location),self.vector(self.location))
         self.center_lane_deviation += self.distance_from_center
 
-        # Get angle difference between closest waypoint and vehicle forward vector
-        fwd = self.vector(self.vehicle.get_velocity())
-        wp_fwd = self.vector(self.current_waypoint.transform.rotation.get_forward_vector())
-        self.angle  = self.angle_diff(fwd, wp_fwd)
+        # fwd = self.vector(self.vehicle.get_velocity())
 
+        # wp_fwd = self.vector(self.vehicle_leader.get_velocity())
+        # get steering difference between vehicle and leader
+        fwd = self.vehicle.get_transform().rotation.yaw
+        wp_fwd = self.vehicle_leader.get_transform().rotation.yaw
+        self.angle  = abs(wp_fwd - fwd)
+        if self.angle >= 180:
+            self.angle = 360 - self.angle
          # Update checkpoint for training
         if not self.fresh_start:
             if self.checkpoint_frequency is not None:
-                self.checkpoint_waypoint_index = (self.current_waypoint_index // self.checkpoint_frequency) * self.checkpoint_frequency
+                self.checkpoint_waypoint_index = (
+                                                             self.current_waypoint_index // self.checkpoint_frequency) * self.checkpoint_frequency
 
-
-        if not self.fresh_start:
-            if self.checkpoint_frequency is not None:
-                self.checkpoint_waypoint_index = (self.current_waypoint_index // self.checkpoint_frequency) * self.checkpoint_frequency
-
-
-        # Rewards are given below!
+            # Rewards are given below!
         done = False
 
-        if self.velocity > self.target_speed:
-            r_v = self.target_speed - self.velocity
+        if self.angle < self.max_angle:
+            r_a = (self.max_angle - self.angle) / self.max_angle
         else:
-            r_v = self.velocity
+            r_a = -10
+            done = True
+
+        if self.velocity > self.target_speed:
+            r_v = (self.target_speed - self.velocity) / self.target_speed
+        else:
+            r_v = self.velocity / self.target_speed
         if len(self.collision_history) != 0:
             done = True
             r_c = -10
         else:
-            r_c = 0
+            r_c = self.timesteps / 7500
         if self.distance_from_center > self.max_distance_from_center:
             done = True
             r_o = -10
         else:
-            r_o = 0
+            r_o = (self.max_distance_from_center - self.distance_from_center) / self.max_distance_from_center
 
         if self.lead_dist_obs > self.max_distance_from_leader:
             r_l = -10
             done = True
-        elif self.lead_dist_obs < self.min_distance_from_leader:
+        elif self.min_distance_from_leader <= self.lead_dist_obs < self.max_distance_from_leader:
+            mid = self.min_distance_from_leader + (self.max_distance_from_leader - self.min_distance_from_leader) / 2
+            r_l = abs((self.lead_dist_obs - mid)) / (
+                        (self.max_distance_from_leader - self.min_distance_from_leader) / 2)
+        else:
             r_l = -10
             done = True
-        elif self.lead_dist_obs < self.target_dist:
-            r_l = self.lead_dist_obs
-        else:
-            r_l = self.target_dist - self.lead_dist_obs
-        r_s = -0.1 # for stopping
-        reward = r_v + r_c + r_o + r_l + r_s
+        r_s = -0.1  # for stopping
+
+        reward = r_v + r_c + r_o + r_l + r_s + r_a
+        #
+        # # Interpolated from 1 when centered to 0 when 3 m from center
+        # centering_factor = max(1.0 - self.distance_from_center / self.max_distance_from_center, 0.0)
+        # # # Interpolated from 1 when aligned with the road to 0 when +/- 30 degress of road
+        # angle_factor = max(1.0 - abs(self.angle / np.deg2rad(20)), 0.0)
+        # distance_factor = max(1.0 - self.lead_dist_obs / self.max_distance_from_leader, 0.0)
+        #
+        # if not done:
+        #     if self.velocity < self.min_speed:
+        #         reward = (self.velocity / self.min_speed) * distance_factor
+        #     elif self.velocity > self.target_speed:
+        #         reward = (1.0 - (self.velocity-self.target_speed) / (self.max_speed-self.target_speed)) * distance_factor
+        #     else:
+        #         reward = 1.0 * distance_factor
 
         if self.timesteps >= 7500:
             done = True
@@ -326,21 +342,22 @@ class CarlaEnvironment(EnvBase):
             done = True
             self.fresh_start = True
             if self.checkpoint_frequency is not None:
-                if self.checkpoint_frequency < self.total_distance//2:
+                if self.checkpoint_frequency < self.total_distance // 2:
                     self.checkpoint_frequency += 2
                 else:
                     self.checkpoint_frequency = None
                     self.checkpoint_waypoint_index = 0
 
-        while(len(self.camera_obj.front_camera) == 0):
+        while (len(self.camera_obj.front_camera) == 0):
             time.sleep(0.0001)
 
         self.image_obs = self.camera_obj.front_camera.pop(-1)
-        normalized_velocity = self.velocity/self.target_speed
+        normalized_velocity = self.velocity / self.target_speed
         normalized_distance_from_center = self.distance_from_center / self.max_distance_from_center
         normalized_angle = abs(self.angle / np.deg2rad(20))
-        self.navigation_obs = np.array([[self.throttle, self.velocity, normalized_velocity, normalized_distance_from_center,
-                                         normalized_angle, self.lead_dist_obs]])
+        self.navigation_obs = np.array(
+            [[self.throttle, self.velocity, steer, normalized_distance_from_center,
+              self.angle, self.lead_dist_obs]])
 
         # image_obs = torch.tensor(self.image_obs, dtype=torch.float).to(self.device)
         # image_obs = image_obs.unsqueeze(0)
@@ -357,12 +374,12 @@ class CarlaEnvironment(EnvBase):
         # encode_obs = self.conv_encoder(image_obs)
         # self.obs = torch.cat(((encode_obs, torch.tensor(self.navigation_obs, device=self.device, dtype=self.dtype))), 1)
 
-
         # self.obs = torch.cat(((encode_obs, torch.tensor(self.navigation_obs, device=self.device, dtype=self.dtype))), 1)
         out_tensordict = TensorDict({"pixel": image_obs,
                                      "navigation": navigation_obs,
                                      "reward": torch.tensor(np.array([reward]), device=self.device, dtype=self.dtype),
-                                     "done": torch.tensor(np.array([done]), device=self.device)}, batch_size=torch.Size(), device=self.device)
+                                     "done": torch.tensor(np.array([done]), device=self.device)},
+                                    batch_size=torch.Size(), device=self.device)
         # Remove everything that has been spawned in the env
         if done:
             self.center_lane_deviation = self.center_lane_deviation / self.timesteps
@@ -388,9 +405,7 @@ class CarlaEnvironment(EnvBase):
         #     if self.display_on:
         #         pygame.quit()
 
-
-
-# -------------------------------------------------
+    # -------------------------------------------------
 # Creating and Spawning Pedestrians in our world |
 # -------------------------------------------------
 

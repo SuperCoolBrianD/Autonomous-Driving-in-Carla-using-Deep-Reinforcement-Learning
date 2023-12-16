@@ -46,5 +46,4 @@ print(env.specs)
 env.transform[-1].init_stats(num_iter=100, reduce_dim=0, cat_dim=0)
 check_env_specs(env)
 agent = PPOAgent(env, device)
-
 agent.train()

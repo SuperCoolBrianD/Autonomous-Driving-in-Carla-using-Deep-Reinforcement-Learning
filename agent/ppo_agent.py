@@ -22,6 +22,7 @@ from torchrl.objectives.value import GAE
 from torchrl.modules import ProbabilisticActor, LSTMModule, MLP
 from tensordict.nn import TensorDictModule, TensorDictSequential
 from tensordict.nn.distributions import NormalParamExtractor
+import pickle
 def create_model(input_size, output_size, env, hidden_size=256, num_layers=3, out_keys=["logits"]):
 
     return
@@ -60,7 +61,7 @@ class PPOAgent:
             # these keys match by default but we set this for completeness
             value_target_key=self.advantage_module.value_target_key,
             critic_coef=1.0,
-            gamma=0.99,
+            gamma=gamma,
             loss_critic_type="smooth_l1",
         )
         self.optim = torch.optim.Adam(self.loss_module.parameters(), lr)
@@ -95,8 +96,8 @@ class PPOAgent:
             in_keys=["loc", "scale"],
             distribution_class=TanhNormal,
             distribution_kwargs={
-                "min": self.env .action_spec.space.minimum,
-                "max": self.env .action_spec.space.maximum,
+                "min": self.env.action_spec.space.minimum,
+                "max": self.env.action_spec.space.maximum,
             },
             return_log_prob=True,
             # we'll need the log-prob for the numerator of the importance weights
@@ -142,7 +143,7 @@ class PPOAgent:
                     loss_value.backward()
                     # this is not strictly mandatory but it's good practice to keep
                     # your gradient norm bounded
-                    torch.nn.utils.clip_grad_norm_(self.loss_module.parameters(), max_grad_norm)
+                    # torch.nn.utils.clip_grad_norm_(self.loss_module.parameters(), max_grad_norm)
                     self.optim.step()
                     self.optim.zero_grad()
 
@@ -156,6 +157,7 @@ class PPOAgent:
             logs["lr"].append(self.optim.param_groups[0]["lr"])
             lr_str = f"lr policy: {logs['lr'][-1]: 4.4f}"
             if i % 10 == 0:
+                print('evaluating')
                 # We evaluate the policy once every 10 batches of data.
                 # Evaluation is rather simple: execute the policy without exploration
                 # (take the expected value of the action distribution) for a given
@@ -164,7 +166,7 @@ class PPOAgent:
                 # it will then execute this policy at each step.
                 with set_exploration_type(ExplorationType.MEAN), torch.no_grad():
                     # execute a rollout with the trained policy
-                    eval_rollout = self.env.rollout(1000, self.policy_module)
+                    eval_rollout = self.env.rollout(10000, self.policy_module)
                     logs["eval reward"].append(eval_rollout["next", "reward"].mean().item())
                     logs["eval reward (sum)"].append(
                         eval_rollout["next", "reward"].sum().item()
@@ -176,6 +178,9 @@ class PPOAgent:
                         f"eval step-count: {logs['eval step_count'][-1]}"
                     )
                     del eval_rollout
+                pickle.dump(self.policy_module, open(f"trained_model/trained_policy_{i}.pkl", "wb"))
+                pickle.dump(self.value_module, open(f"trained_model/trained_critic_{i}.pkl", "wb"))
+                pickle.dump(logs, open(f"trained_model/logs_{i}.pkl", "wb"))
             pbar.set_description(", ".join([eval_str, cum_reward_str, stepcount_str, lr_str]))
 
             # We're also using a learning rate scheduler. Like the gradient clipping,

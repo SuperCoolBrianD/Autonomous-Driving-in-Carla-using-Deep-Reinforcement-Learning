@@ -68,7 +68,7 @@ class CarlaEnvironment(EnvBase):
         done_spec = DiscreteTensorSpec(2, shape=torch.Size([1]), dtype=torch.bool)
         terminated = DiscreteTensorSpec(2, shape=torch.Size([1]), dtype=torch.bool)
         self.done_spec = CompositeSpec(done=done_spec, terminated=terminated)
-        self.min_distance_from_leader = 0.5
+
         # self.create_pedestrians()
 
 
@@ -157,6 +157,7 @@ class CarlaEnvironment(EnvBase):
         self.min_speed = 15.0
         self.max_distance_from_center = 3
         self.max_distance_from_leader = 25
+        self.min_distance_from_leader = 0.5
         self.throttle = float(0.0)
         self.previous_steer = float(0.0)
         self.velocity = float(0.0)
@@ -313,7 +314,9 @@ class CarlaEnvironment(EnvBase):
             r_l = -10
             done = True
         elif self.min_distance_from_leader <= self.lead_dist_obs < self.max_distance_from_leader:
-            r_l = 1
+            mid = self.min_distance_from_leader + (self.max_distance_from_leader-self.min_distance_from_leader)/2
+            r_l = abs((self.lead_dist_obs-mid))/((self.max_distance_from_leader-self.min_distance_from_leader)/2)
+            print('in the middle')
         else:
             print('too close')
             r_l = -10
