@@ -23,6 +23,9 @@ from torchrl.modules import ProbabilisticActor, LSTMModule, MLP
 from tensordict.nn import TensorDictModule, TensorDictSequential
 from tensordict.nn.distributions import NormalParamExtractor
 import pickle
+from datetime import datetime
+import os
+
 def create_model(input_size, output_size, env, hidden_size=256, num_layers=3, out_keys=["logits"]):
 
     return
@@ -59,11 +62,11 @@ class PPOAgent:
             entropy_bonus=bool(entropy_eps),
             entropy_coef=entropy_eps,
             # these keys match by default but we set this for completeness
-            value_target_key=self.advantage_module.value_target_key,
             critic_coef=1.0,
-            gamma=gamma,
             loss_critic_type="smooth_l1",
         )
+        self.loss_module.set_keys()
+        self.loss_module.make_value_estimator(gamma=gamma)
         self.optim = torch.optim.Adam(self.loss_module.parameters(), lr)
         self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
             self.optim, total_frames // frames_per_batch, 0.0
@@ -96,8 +99,8 @@ class PPOAgent:
             in_keys=["loc", "scale"],
             distribution_class=TanhNormal,
             distribution_kwargs={
-                "min": self.env.action_spec.space.minimum,
-                "max": self.env.action_spec.space.maximum,
+                "min": self.env.action_spec.space.low,
+                "max": self.env.action_spec.space.high,
             },
             return_log_prob=True,
             # we'll need the log-prob for the numerator of the importance weights
@@ -117,10 +120,12 @@ class PPOAgent:
         logs = defaultdict(list)
         pbar = tqdm(total=total_frames * frame_skip)
         eval_str = ""
+        save_folder = "./trained_model/" + datetime.now().strftime("%Y%m%d-%H%M%S")
 
         # We iterate over the collector until it reaches the total number of frames it was
         # designed to collect:
         for i, tensordict_data in enumerate(self.collector):
+            print(f"\n==> #{i} data collection complete. Training...")  # pause here
             # we now have a batch of data to work with. Let's learn something from it.
             for _ in range(num_epochs):
                 # We'll need an "advantage" signal to make PPO work.
@@ -157,7 +162,9 @@ class PPOAgent:
             logs["lr"].append(self.optim.param_groups[0]["lr"])
             lr_str = f"lr policy: {logs['lr'][-1]: 4.4f}"
             if i % 10 == 0:
-                print('evaluating')
+                print('==> Evaluation epoch')
+                if not os.path.exists(save_folder):
+                    os.makedirs(save_folder)
                 # We evaluate the policy once every 10 batches of data.
                 # Evaluation is rather simple: execute the policy without exploration
                 # (take the expected value of the action distribution) for a given
@@ -178,9 +185,9 @@ class PPOAgent:
                         f"eval step-count: {logs['eval step_count'][-1]}"
                     )
                     del eval_rollout
-                pickle.dump(self.policy_module, open(f"trained_model/trained_policy_{i}.pkl", "wb"))
-                pickle.dump(self.value_module, open(f"trained_model/trained_critic_{i}.pkl", "wb"))
-                pickle.dump(logs, open(f"trained_model/logs_{i}.pkl", "wb"))
+                pickle.dump(self.policy_module, open(f"{save_folder}/trained_policy_{i}.pkl", "wb"))
+                pickle.dump(self.value_module, open(f"{save_folder}/trained_critic_{i}.pkl", "wb"))
+                pickle.dump(logs, open(f"{save_folder}/logs_{i}.pkl", "wb"))
             pbar.set_description(", ".join([eval_str, cum_reward_str, stepcount_str, lr_str]))
 
             # We're also using a learning rate scheduler. Like the gradient clipping,

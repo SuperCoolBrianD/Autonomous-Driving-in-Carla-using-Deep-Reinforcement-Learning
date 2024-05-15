@@ -58,7 +58,7 @@ class CarlaEnvironment(EnvBase):
         # self.conv_encoder.load()
         # self.conv_encoder.eval()
         # specs
-        self.action_spec = BoundedTensorSpec(minimum=-1, maximum=1, shape=torch.Size([self.action_size])) # limit the action values
+        self.action_spec = BoundedTensorSpec(low=-1, high=1, shape=torch.Size([self.action_size])) # limit the action values
 
         self.image_spec = UnboundedContinuousTensorSpec(shape=torch.Size([self.n_agents, 160, 80, 3]), dtype=self.dtype) # unlimited observation space
         self.nav_spec = UnboundedContinuousTensorSpec(shape=torch.Size([self.n_agents, 6]), dtype=self.dtype) # Navigation spec
@@ -287,11 +287,13 @@ class CarlaEnvironment(EnvBase):
             # Rewards are given below!
         done = False
 
-        if self.angle < self.max_angle:
-            r_a = (self.max_angle - self.angle) / self.max_angle
-        else:
-            r_a = -10
-            done = True
+        # should change to angle w.r.t. trajectory
+        r_a = 0
+        # if self.angle < self.max_angle:
+        #     r_a = (self.max_angle - self.angle) / self.max_angle
+        # else:
+        #     r_a = -10
+        #     done = True
 
         if self.velocity > self.target_speed:
             r_v = (self.target_speed - self.velocity) / self.target_speed
@@ -318,7 +320,7 @@ class CarlaEnvironment(EnvBase):
         else:
             r_l = -10
             done = True
-        r_s = -0.1  # for stopping
+        r_s = 0.1  # for stopping
 
         reward = r_v + r_c + r_o + r_l + r_s + r_a
         #
