@@ -187,7 +187,7 @@ class PPOAgent:
                     del eval_rollout
                 pickle.dump(self.policy_module, open(f"{save_folder}/trained_policy_{i}.pkl", "wb"))
                 pickle.dump(self.value_module, open(f"{save_folder}/trained_critic_{i}.pkl", "wb"))
-                pickle.dump(logs, open(f"{save_folder}/logs_{i}.pkl", "wb"))
+                pickle.dump(logs, open(f"{save_folder}/logs.pkl", "wb"))
             pbar.set_description(", ".join([eval_str, cum_reward_str, stepcount_str, lr_str]))
 
             # We're also using a learning rate scheduler. Like the gradient clipping,
